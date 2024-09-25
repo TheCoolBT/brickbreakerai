@@ -1,103 +1,173 @@
 import pygame
+import neat
+import os
 import random
-import sys
+from config import *
+from game_ball import Ball
+from brick import Brick
+from paddle import Paddle
 
-# Initialize Pygame
 pygame.init()
 
-# Constants
-WIDTH, HEIGHT = 600, 400
-WHITE = (255, 255, 255)
-BLACK = (0, 0, 0)
-RED = (255, 0, 0)
-GREEN = (0, 255, 0)
-BLUE = (0, 0, 255)
-
-# Game screen
+# Screen setup
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("Brick Breaker")
-
-# Paddle settings
-PADDLE_WIDTH = 100
-PADDLE_HEIGHT = 10
-PADDLE_SPEED = 7
-paddle = pygame.Rect(WIDTH // 2 - PADDLE_WIDTH // 2, HEIGHT - 20, PADDLE_WIDTH, PADDLE_HEIGHT)
-
-# Ball settings
-BALL_RADIUS = 8
-ball = pygame.Rect(WIDTH // 2, HEIGHT // 2, BALL_RADIUS, BALL_RADIUS)
-ball_speed_x = 3 * random.choice((1, -1))
-ball_speed_y = 3 * random.choice((1, -1))
-
-# Brick settings
-BRICK_ROWS = 5
-BRICK_COLUMNS = 10
-BRICK_WIDTH = WIDTH // BRICK_COLUMNS
-BRICK_HEIGHT = 20
-bricks = [pygame.Rect(col * BRICK_WIDTH, row * BRICK_HEIGHT, BRICK_WIDTH, BRICK_HEIGHT)
-          for row in range(BRICK_ROWS) for col in range(BRICK_COLUMNS)]
+pygame.display.set_caption("NEAT AI Brick Breaker")
+clock = pygame.time.Clock()
 
 # Game variables
-clock = pygame.time.Clock()
-score = 0
-font = pygame.font.Font(None, 36)
+balls = []
+bricks = []
+wave = 1  # Track the current wave
+generation = 0  # Track generations
+font = pygame.font.Font(None, 36)  # Font for displaying text
 
-# Functions
-def draw_objects():
-    screen.fill(BLACK)
-    pygame.draw.rect(screen, BLUE, paddle)
-    pygame.draw.ellipse(screen, RED, ball)
+def random_color():
+    """Generate a random RGB color."""
+    return (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
 
-    for brick in bricks:
-        pygame.draw.rect(screen, GREEN, brick)
+def eval_genomes(genomes, config):
+    global wave, generation
+    generation += 1
 
-    score_text = font.render(f"Score: {score}", True, WHITE)
-    screen.blit(score_text, (10, 10))
+    nets = []
+    paddles = []
+    ge = []
+    scores = []  # Track the score for each AI
+    paddle_balls = []  # Store (ball, paddle) pairs for initial balls
 
-def move_paddle():
-    keys = pygame.key.get_pressed()
-    if keys[pygame.K_LEFT] and paddle.left > 0:
-        paddle.x -= PADDLE_SPEED
-    if keys[pygame.K_RIGHT] and paddle.right < WIDTH:
-        paddle.x += PADDLE_SPEED
+    # Setup NEAT agents
+    for genome_id, genome in genomes:
+        net = neat.nn.FeedForwardNetwork.create(genome, config)
+        nets.append(net)
+        
+        # Generate a random color for the paddle and its balls
+        paddle_color = random_color()
+        paddle = Paddle(color=paddle_color)
+        paddles.append(paddle)
+        
+        # Create the initial ball with the paddle's color
+        ball = Ball(WIDTH // 2, HEIGHT // 2, color=paddle_color)
+        paddle_balls.append((ball, paddle))  # Track the initial ball and its owner
+        
+        genome.fitness = 0
+        ge.append(genome)
+        scores.append(0)  # Initialize scores
 
-def move_ball():
-    global ball_speed_x, ball_speed_y, score
-    ball.x += ball_speed_x
-    ball.y += ball_speed_y
+    spawn_new_wave(bricks, wave)
 
-    # Ball collision with walls
-    if ball.left <= 0 or ball.right >= WIDTH:
-        ball_speed_x *= -1
-    if ball.top <= 0:
-        ball_speed_y *= -1
-    if ball.bottom >= HEIGHT:
-        pygame.quit()
-        sys.exit()
+    # Game loop
+    while len(paddles) > 0:
+        clock.tick(FPS)
 
-    # Ball collision with paddle
-    if ball.colliderect(paddle):
-        ball_speed_y *= -1
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                quit()
 
-    # Ball collision with bricks
-    hit_index = ball.collidelist(bricks)
-    if hit_index != -1:
-        brick = bricks.pop(hit_index)
-        ball_speed_y *= -1
-        score += 10
+        # Move AI-controlled paddles and their associated balls
+        for x in range(len(paddles)):
+            paddle = paddles[x]
+            ball, owner_paddle = paddle_balls[x]  # Each paddle can only interact with its own ball
 
-# Main game loop
-running = True
-while running:
-    clock.tick(60)  # 60 frames per second
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            running = False
+            ball.move()
 
-    move_paddle()
-    move_ball()
-    draw_objects()
+            # Neural network inputs: ball x, ball y, ball velocity, paddle x
+            output = nets[x].activate((ball.rect.x, ball.rect.y, ball.speed_x, paddle.rect.x))
 
-    pygame.display.flip()
+            # AI decides whether to move paddle left, right, or hold still
+            if output[0] > 0.66:  # Move right
+                paddle.move_right()
+            elif output[0] < 0.33:  # Move left
+                paddle.move_left()
+            else:  # Else hold still
+                pass
 
-pygame.quit()
+            # Check for ball-paddle collision (only owner interacts with its own ball)
+            ball.check_paddle_collision(paddle)
+
+            # Check for ball-brick collision
+            if ball.check_brick_collision(bricks, paddle_balls, paddle):
+                scores[x] += 1  # Increment score when a brick is destroyed
+                ge[x].fitness += 10  # Give a significant fitness boost for destroying a brick
+
+            # Check if the ball is out of bounds
+            if ball.rect.bottom >= HEIGHT:
+                ge[x].fitness -= 10  # Penalize fitness for missing the ball
+                
+                # Remove the paddle and its associated ball
+                paddles.pop(x)
+                nets.pop(x)
+                ge.pop(x)
+                paddle_balls.pop(x)
+                scores.pop(x)
+                break  # Exit the loop early to avoid index errors
+
+            else:
+                ge[x].fitness += 0.1  # Reward for keeping the ball in play
+
+                # Reward for alignment with the ball on the x-axis
+                if abs(paddle.rect.centerx - ball.rect.centerx) < 10:  # Allow a tolerance of 10 pixels
+                    ge[x].fitness += 0.1  # Reward for being aligned with the ball's x-coordinate
+
+        # If all bricks are destroyed, spawn a new wave
+        if len(bricks) == 0:
+            wave += 1
+            spawn_new_wave(bricks, wave)
+
+            # Increment ball speed after every wave
+            for ball, _ in paddle_balls:
+                ball.speed_x *= 1.05  # Increase speed by 5%
+                ball.speed_y *= 1.05
+
+        # --- Drawing section ---
+        screen.fill(BLACK)
+
+        # Draw game objects (paddles, balls, bricks)
+        for paddle in paddles:
+            paddle.draw(screen)
+        for ball, _ in paddle_balls:
+            ball.draw(screen)
+        for brick in bricks:
+            brick.draw(screen)
+
+        # Display generation info and current scores
+        generation_text = font.render(f"Generation: {generation}", True, WHITE)
+        ai_count_text = font.render(f"AI Remaining: {len(paddles)}", True, WHITE)
+        screen.blit(generation_text, (10, 10))
+        screen.blit(ai_count_text, (10, 50))
+
+        # Display the score for each AI
+        for idx, score in enumerate(scores):
+            score_text = font.render(f"AI {idx + 1} Score: {score}", True, WHITE)
+            screen.blit(score_text, (10, 100 + idx * 30))
+
+        pygame.display.flip()  # Update the screen
+
+# Spawn a new wave of bricks
+def spawn_new_wave(bricks, wave):
+    bricks.clear()
+    avg_durability = INITIAL_DIFFICULTY + (wave - 1) * DIFFICULTY_INCREMENT
+    for row in range(BRICK_ROWS):
+        for col in range(BRICK_COLUMNS):
+            if random.random() < 0.7:  # 70% chance to spawn a brick
+                durability = max(1, int(random.gauss(avg_durability, 1)))
+                bricks.append(Brick(col * BRICK_WIDTH, row * BRICK_HEIGHT, durability))
+
+# Setup NEAT
+def run_neat(config_file):
+    config = neat.config.Config(neat.DefaultGenome, neat.DefaultReproduction, 
+                                neat.DefaultSpeciesSet, neat.DefaultStagnation, 
+                                config_file)
+
+    population = neat.Population(config)
+    population.add_reporter(neat.StdOutReporter(True))
+    stats = neat.StatisticsReporter()
+    population.add_reporter(stats)
+
+    # Evolve for 50 generations
+    population.run(eval_genomes, 50)
+
+if __name__ == "__main__":
+    local_dir = os.path.dirname(__file__)
+    config_path = os.path.join(local_dir, "neat-config.txt")
+    run_neat(config_path)
