@@ -28,6 +28,8 @@ class Ball:
     def check_paddle_collision(self, paddle):
         if self.rect.colliderect(paddle.rect):
             self.speed_y *= -1
+            return True
+        return False
 
     def check_brick_collision(self, bricks, balls, owner_paddle):
         hit_index = self.rect.collidelist([brick.rect for brick in bricks])
