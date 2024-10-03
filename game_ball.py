@@ -19,6 +19,10 @@ class Ball:
         self.rect.x += self.speed_x
         self.rect.y += self.speed_y
 
+        # Freeze the ball for %.05 of the time
+        if random.random() < 0.0005:
+            self.speed_y = 0
+
         # Collision with walls
         if self.rect.left <= 0 or self.rect.right >= WIDTH:
             self.speed_x *= -1
@@ -27,7 +31,12 @@ class Ball:
 
     def check_paddle_collision(self, paddle):
         if self.rect.colliderect(paddle.rect):
-            self.speed_y *= -1
+
+            if random.random() < 0.9:
+                self.speed_y *= -1
+
+            if random.random() < 0.1:
+                self.speed_x *= -1
             return True
         return False
 
@@ -45,7 +54,7 @@ class Ball:
 
             # Ensure the ball's speed doesn't get stuck at zero after collision
             if self.speed_y == 0:
-                self.speed_y = 3  # Force it to move downwards if it gets stuck
+                self.speed_y = 0  # Force it to move downwards if it gets stuck
             if self.speed_x == 0:
                 self.speed_x = random.choice([-3, 3])  # Force horizontal movement if it gets stuck
 

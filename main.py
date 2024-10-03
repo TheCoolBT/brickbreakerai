@@ -27,7 +27,9 @@ font = pygame.font.Font(None, 36)  # Font for displaying text
 paddle_bug = []
 score_bug = []
 death_bug = []
-all_agent_scores = []
+x_bug = []
+y_bug = []
+stuck_bug = []
 
 acc_time = 1
 
@@ -47,6 +49,9 @@ def eval_genomes(genomes, config):
     paddle_bug.append(0)
     score_bug.append(0)
     death_bug.append(0)
+    x_bug.append(0)
+    y_bug.append(0)
+    stuck_bug.append(0)
 
     nets = []
     paddles = []
@@ -55,6 +60,9 @@ def eval_genomes(genomes, config):
     previous_scores = []  # Initialize previous scores
     paddle_balls = []  # Store (ball, paddle) pairs for initial balls
     times = []
+    y_poses = []
+
+    interval = 0
 
     # Setup NEAT agents
     for genome_id, genome in genomes:
@@ -76,6 +84,7 @@ def eval_genomes(genomes, config):
 
         times.append(-1)
         previous_scores.append(0)
+        y_poses.append(0)
 
     spawn_new_wave(bricks, wave)
 
@@ -125,15 +134,33 @@ def eval_genomes(genomes, config):
                 pass
 
             # Check for ball-paddle collision (only owner interacts with its own ball)
+            ball_x = ball.speed_x
+            ball_y = ball.speed_y
             coll = ball.check_paddle_collision(paddle)
             if coll:
+                if ball.speed_x != ball_x:
+                    print("ERROR: ball heading in wrong x direction for agent " + str(x))
+                    print()
+                    x_bug[generation-1] += 1
+
+                if ball.speed_y == ball_y:
+                    print("ERROR: ball passed through paddle for agent " + str(x))
+                    print()
+                    y_bug[generation-1] += 1
+                    paddles.pop(x)
+                    nets.pop(x)
+                    ge.pop(x)
+                    paddle_balls.pop(x)
+                    scores.pop(x)
+                    break  # Exit the loop early to avoid index errors
+
                 if times[x] != -1:
                     curr_time = time.time() - times[x]
                     if curr_time < acc_time and last_bug_report != x:
                         print("ERROR: ball might be stuck in paddle for agent " + str(x))
                         print("Time between last hit abnormally low: " + str(round(curr_time, 3)) + " seconds")
                         print()
-                        paddle.color = (255, 0, 0)
+                        #paddle.color = (255, 0, 0)
                         last_bug_report = x
                         ge[x].fitness += 20
                         start_time = -1
@@ -146,8 +173,19 @@ def eval_genomes(genomes, config):
                         start_time = -1
                 times[x] = time.time()
 
-
-
+            if time.time() % 3 >= 2.8:
+                if y_poses[x] == ball.rect.y:
+                    print("ERROR: the ball is stuck for agent " + str(x))
+                    print()
+                    stuck_bug[generation - 1] += 1
+                    paddles.pop(x)
+                    nets.pop(x)
+                    ge.pop(x)
+                    paddle_balls.pop(x)
+                    scores.pop(x)
+                    times.pop(x)
+                    break
+                y_poses[x] = ball.rect.y
 
             # Check if score updates accordingly
 
@@ -166,7 +204,7 @@ def eval_genomes(genomes, config):
                     print("ERROR: Score not updated correctly for Agent " + str(x))
                     print("The score for Agent " + str(x) + " should be: " + str(expected_score) + " but it is " + str(previous_scores[x]))
                     print()
-                    paddle.color = (0, 255, 0)
+                    #paddle.color = (0, 255, 0)
 
                     score_bug[generation - 1] += 1
                 # Update the previous score
@@ -263,7 +301,7 @@ def run_neat(config_file):
     population.add_reporter(stats)
 
     # Evolve for 50 generations
-    population.run(eval_genomes, 6)
+    population.run(eval_genomes, 3)
     print()
     print("Bugs detected")
     for x in range(generation):
@@ -271,6 +309,10 @@ def run_neat(config_file):
         print("Paddle bugs: " + str(paddle_bug[x]))
         print("Score bugs: " + str(score_bug[x]))
         print("Death bugs: " + str(death_bug[x]))
+        print("Wrong Direction bugs: " + str(x_bug[x]))
+        print("Ball goes through paddle bugs: " + str(y_bug[x]))
+        print("Ball gets stuck bugs: " + str(stuck_bug[x]))
+
         print()
 
     # Plot the total bugs
@@ -278,27 +320,91 @@ def run_neat(config_file):
 
 
 
+# def plot_total_bugs():
+#     generations = range(1, len(paddle_bug) + 1)
+#
+#     plt.figure(figsize=(10, 6))
+#     plt.bar(generations, paddle_bug, color='blue', label='Paddle Bugs')
+#     plt.bar(generations, score_bug, bottom=paddle_bug, color='green', label='Score Bugs')
+#     plt.bar(generations, death_bug, bottom=[i+j for i,j in zip(paddle_bug, score_bug)], color='red', label='Death Bugs')
+#     plt.bar(generations, x_bug, bottom=[i + j + k for i, j, k in zip(paddle_bug, score_bug, death_bug)], color='orange',
+#             label='X Bugs')
+#     plt.bar(generations, y_bug, bottom=[i + j + k + l for i, j, k, l in zip(paddle_bug, score_bug, death_bug, x_bug)], color='purple',
+#             label='Y Bugs')
+#
+#     plt.title('Bugs per Generation')
+#     plt.xlabel('Generation')
+#     plt.ylabel('Number of Bugs')
+#
+#     # Add labels on top of each stacked bar
+#     for i, (p, s, d, e, f) in enumerate(zip(paddle_bug, score_bug, death_bug, x_bug, y_bug)):
+#         total = p + s + d + e + f
+#         plt.text(i + 1, total, str(total), ha='center', va='bottom')
+#
+#     plt.legend()
+#     plt.tight_layout()
+#     plt.show()  # This will display the plot
+#
+
+
+
 def plot_total_bugs():
     generations = range(1, len(paddle_bug) + 1)
 
     plt.figure(figsize=(10, 6))
+
+    # Create the stacked bar chart
     plt.bar(generations, paddle_bug, color='blue', label='Paddle Bugs')
     plt.bar(generations, score_bug, bottom=paddle_bug, color='green', label='Score Bugs')
-    plt.bar(generations, death_bug, bottom=[i+j for i,j in zip(paddle_bug, score_bug)], color='red', label='Death Bugs')
+    plt.bar(generations, death_bug, bottom=[i + j for i, j in zip(paddle_bug, score_bug)], color='red',
+            label='Death Bugs')
+    plt.bar(generations, x_bug, bottom=[i + j + k for i, j, k in zip(paddle_bug, score_bug, death_bug)], color='orange',
+            label='X Bugs')
+    plt.bar(generations, y_bug, bottom=[i + j + k + l for i, j, k, l in zip(paddle_bug, score_bug, death_bug, x_bug)],
+            color='purple', label='Y Bugs')
+    plt.bar(generations, stuck_bug, bottom=[i + j + k + l + m for i, j, k, l, m in zip(paddle_bug, score_bug, death_bug, x_bug, y_bug)],
+            color='pink', label='Stuck Bugs')
 
     plt.title('Bugs per Generation')
     plt.xlabel('Generation')
     plt.ylabel('Number of Bugs')
 
-    # Add labels on top of each stacked bar
-    for i, (p, s, d) in enumerate(zip(paddle_bug, score_bug, death_bug)):
-        total = p + s + d
-        plt.text(i + 1, total, str(total), ha='center', va='bottom')
+    # Add labels for each block
+    for i, (p, s, d, x, y, t) in enumerate(zip(paddle_bug, score_bug, death_bug, x_bug, y_bug, stuck_bug)):
+        # Calculate the vertical positions for each label
+        y_paddle = p / 2
+        y_score = p + s / 2
+        y_death = p + s + d / 2
+        y_x = p + s + d + x / 2
+        y_y = p + s + d + x + y / 2
+        y_stuck = p + s + d + x + y + t/ 2
+
+        # Add text labels
+        if p != 0:
+            plt.text(i + 1, y_paddle, str(p), ha='center', va='center')
+
+        if s != 0:
+            plt.text(i + 1, y_score, str(s), ha='center', va='center')
+
+        if d != 0:
+            plt.text(i + 1, y_death, str(d), ha='center', va='center')
+
+        if x != 0:
+            plt.text(i + 1, y_x, str(x), ha='center', va='center')
+
+        if y != 0:
+            plt.text(i + 1, y_y, str(y), ha='center', va='center')
+
+        if t != 0:
+            plt.text(i + 1, y_stuck, str(t), ha='center', va='center')
+
+        # Add total on top
+        total = p + s + d + x + y + t
+        plt.text(i + 1, total, f'Total: {total}', ha='center', va='bottom')
 
     plt.legend()
     plt.tight_layout()
-    plt.show()  # This will display the plot
-
+    plt.show()
 
 
 if __name__ == "__main__":
